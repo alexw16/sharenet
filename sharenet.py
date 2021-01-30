@@ -1,14 +1,5 @@
 import numpy as np
-import os
 import time
-import csv
-import argparse
-import multiprocessing as mp
-from scipy.stats import norm
-from scipy.stats import multivariate_normal
-from numpy.core.umath_tests import inner1d
-
-from cavi_utils import *
 
 class ShareNet(object):
 	def __init__(self,n_components,covariance_prior=None,mean_prior=None,degrees_of_freedom_prior=None,\
@@ -106,8 +97,7 @@ class ShareNet(object):
 			self.V = np.array([self.V for i in range(self.X.shape[0])])
 		
 		self.m_tilde = X.copy()
-		self.S_tilde = self.V.copy()
-		self.phi = np.ones((X.shape[0],self.K))/self.K		
+		self.S_tilde = self.V.copy()	
 
 		self.X = None
 
@@ -117,10 +107,12 @@ class ShareNet(object):
 			from sklearn.cluster import KMeans
 			km = KMeans(n_clusters=self.K,max_iter=20).fit(X)
 			self.means_ = km.cluster_centers_
-			self.phi *= 0
+			self.phi = np.zeros((X.shape[0],self.K))
 			self.phi[np.arange(self.phi.shape[0]), km.labels_] = 1
 		else:
 			self.means_ = np.random.random((self.K,self.C))
+			self.phi = np.ones((X.shape[0],self.K))/self.K	
+
 		self.precisions_ = np.array([np.eye(self.C) for k in range(self.K)])
 		self.covariances_ = np.linalg.inv(self.precisions_)
 
