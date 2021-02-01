@@ -3,23 +3,30 @@ import time
 
 class ShareNet(object):
 	def __init__(self,n_components,covariance_prior=None,mean_prior=None,degrees_of_freedom_prior=None,\
-				 init_params='kmeans',random_state=1,covariance_type='normal_wishart',beta_0=1):
+				 init_params='kmeans',random_state=1,beta_0=1):
 		np.random.seed(random_state)
 		
 		self.K = n_components
 		self.init_params = init_params
-		self.covariance_type = covariance_type
-		if covariance_prior is not None and degrees_of_freedom_prior is not None:
-			self.dof = degrees_of_freedom_prior
-			self.Psi_inv = covariance_prior*degrees_of_freedom_prior
+		self.beta_0 = beta_0
+
+		if covariance_prior is not None:
+			self.covariance_prior = covariance_prior
 			self.use_covariance_prior = True
 		else:
 			self.use_covariance_prior = False
+			self.covariance_prior = None
+
+		if degrees_of_freedom_prior is not None:
+			self.dof = degrees_of_freedom_prior
+		else:
+			self.dof = None
 
 		if mean_prior is not None:
 			self.mu_0 = mean_prior
-			self.beta_0 = beta_0
-					
+		else:
+			self.mu_0 = None
+
 	def update_m_tilde(self):
 		first_term = self.phi.dot(np.array([self.means_[k].dot(self.precisions_[k]) \
 											for k in range(self.K)]))
@@ -54,8 +61,7 @@ class ShareNet(object):
 	
 	def update_precisions(self):
 
-		if self.covariance_type == 'normal_wishart':
-			self.dof_tilde = self.dof + self.phi.sum(0)
+		self.dof_tilde = self.dof + self.phi.sum(0)
 
 		for k in range(self.K):
 			diff = self.m_tilde-self.means_[k]
@@ -63,17 +69,12 @@ class ShareNet(object):
 				+ (self.phi[:,k]*self.S_tilde.T).T.sum(0)
 
 			if self.use_covariance_prior:
-				if self.covariance_type == 'normal_wishart':
-					mean_diff = self.mu_0-(self.phi[:,k]*self.m_tilde.T).T.sum(0)/self.N_k[k]
-					mean_prior_term = mean_diff.T.dot(mean_diff)
-					mean_prior_term *= self.beta_0*self.N_k[k]/(self.beta_0+self.N_k[k])
-					B_tilde_inv = self.Psi_inv + scatter_matrix + mean_prior_term
-					self.B_tilde[k] = np.linalg.inv(B_tilde_inv)
-					self.covariances_[k] = B_tilde_inv/self.dof_tilde[k]
-				else:
-					self.covariances_[k] = scatter_matrix
-					self.covariances_[k] += self.Psi_inv
-					self.covariances_[k] *= 1./(self.dof-self.C-1 + self.phi[:,k].sum())
+				mean_diff = self.mu_0-(self.phi[:,k]*self.m_tilde.T).T.sum(0)/self.N_k[k]
+				mean_prior_term = mean_diff.T.dot(mean_diff)
+				mean_prior_term *= self.beta_0*self.N_k[k]/(self.beta_0+self.N_k[k])
+				B_tilde_inv = self.Psi_inv + scatter_matrix + mean_prior_term
+				self.B_tilde[k] = np.linalg.inv(B_tilde_inv)
+				self.covariances_[k] = B_tilde_inv/self.dof_tilde[k]
 			else:
 				self.covariances_[k] *= 1/self.phi[:,k].sum()
 		self.precisions_ = np.linalg.inv(self.covariances_)
@@ -95,11 +96,22 @@ class ShareNet(object):
 			self.V = np.eye(self.C)/X.std()
 			self.XdotV = self.X*self.V
 			self.V = np.array([self.V for i in range(self.X.shape[0])])
+
+		if self.mu_0 is None:
+			self.mu_0 = np.zeros(self.C)
+
+		if self.dof is None:
+			self.dof = self.C
+
+		if self.covariance_prior is None:
+			self.Psi_inv = np.eye(self.C)*self.dof
+		else:
+			self.Psi_inv = self.covariance_prior*self.dof
 		
 		self.m_tilde = X.copy()
 		self.S_tilde = self.V.copy()	
 
-		self.X = None
+		self.X = None # remove X to reduce memory footprint
 
 	def initialize_mixture_parameters(self,X,V=None):
 
@@ -116,11 +128,10 @@ class ShareNet(object):
 		self.precisions_ = np.array([np.eye(self.C) for k in range(self.K)])
 		self.covariances_ = np.linalg.inv(self.precisions_)
 
-		if self.covariance_type == 'normal_wishart':
-			self.dof_tilde = self.dof + self.phi.sum(0)
-			self.B_tilde = (self.precisions_.T/self.dof_tilde).T
-			self.precisions_ = (self.B_tilde.T*self.dof_tilde).T
-			self.covariances_ = np.linalg.inv(self.precisions_)
+		self.dof_tilde = self.dof + self.phi.sum(0)
+		self.B_tilde = (self.precisions_.T/self.dof_tilde).T
+		self.precisions_ = (self.B_tilde.T*self.dof_tilde).T
+		self.covariances_ = np.linalg.inv(self.precisions_)
 
 	def fit(self,X,V=None,max_it=100,tol=0.01,verbose=True):
 

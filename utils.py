@@ -4,6 +4,17 @@ from scipy import sparse, io
 import pandas as pd
 import random
 
+def posterior_predictiveLL(X,y,alpha,mu,s2,sigma2_eps,XX):
+
+	N = X.shape[0]
+	y_XB = y-X.dot(mu*alpha)
+	LL = -N/2*np.log(2*np.pi*sigma2_eps) 
+	LL -= 1./(2*sigma2_eps)*(y_XB.dot(y_XB))
+	LL -= 1./(2*sigma2_eps)*((alpha*(s2+mu**2)-(alpha*mu)**2)*np.diag(XX)).sum()
+	LL = LL/N
+
+	return LL
+
 def preprocess_data(data,log_transform,z_transform,\
 				depthnorm,clip):
 
@@ -26,7 +37,7 @@ def preprocess_data(data,log_transform,z_transform,\
 	return data
 
 def load_data_train_test(data_dir,cluster_no_list,num_cells_list,trial_no,\
-										percent=80,delimiter='\t',results_dir=None,
+										percent=80,delimiter='\t',results_dir=None,\
 										return_train_inds=False):
 
 	np.random.seed(trial_no)

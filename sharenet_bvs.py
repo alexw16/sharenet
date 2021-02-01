@@ -19,7 +19,9 @@ class TargetGeneCAVI(object):
 	def __init__(self,input_dict):
 
 		self.target_ind = input_dict['target_ind']
-		self.method = input_dict['method']
+		self.use_sharenet = input_dict['use_sharenet']
+		self.verbose = input_dict['verbose']
+
 		self.y_dict = input_dict['y_dict']
 		self.X_dict = input_dict['X_dict']
 		self.XX_dict = input_dict['XX_dict']
@@ -51,11 +53,11 @@ class TargetGeneCAVI(object):
 			self.alpha = init_params_dict['alpha']
 			self.mu = init_params_dict['mu']
 
-			if 'mixture' in self.method:
+			if self.use_sharenet:
 				self.m_tilde = init_params_dict['m_tilde']
 				self.S_tilde = init_params_dict['S_tilde']
-				self.mvg_mean = init_params_dict['mvg_mean']
-				self.mvg_precision = init_params_dict['mvg_precision']
+				self.weighted_mean = init_params_dict['weighted_mean']
+				self.weighted_precision = init_params_dict['weighted_precision']
 
 		# initial default parameters
 		else:
@@ -70,13 +72,13 @@ class TargetGeneCAVI(object):
 			self.mu = {cluster_no: np.zeros(self.num_regs) \
 				for cluster_no in self.cluster_no_list}
 
-			if 'mixture' in self.method:
+			if self.use_sharenet:
 				self.m_tilde = {cluster_no: np.ones(self.num_regs)*-2 \
 					for cluster_no in self.cluster_no_list}
 				self.S_tilde = np.array([np.eye(len(self.cluster_no_list)) \
 					for i in range(self.num_regs)])
 
-		if 'mixture' in self.method:
+		if self.use_sharenet:
 			eta = 0.5
 			K = 6
 			self.w = np.array([norm.cdf(eta*(t+0.5),0,1)-norm.cdf(eta*(t-0.5),0,1) \
@@ -102,8 +104,9 @@ class TargetGeneCAVI(object):
 			for i in range(self.num_regs) for cluster_no in self.cluster_no_list])
 
 		if relative_change_list.max() < self.tolerance or self.it >= max_it:
-			print('GENE {} CONVERGED ({} regulators): {} iterations'.format(\
-				self.target_ind,self.num_regs,self.it))
+			if self.verbose:
+				print('GENE {} CONVERGED ({} regulators): {} iterations'.format(\
+					self.target_ind,self.num_regs,self.it))
 			return True
 		else:
 			return False
@@ -113,7 +116,7 @@ class TargetGeneCAVI(object):
 			'sigma2_beta': self.sigma2_beta,\
 			'sigma2_eps': self.sigma2_eps}
 
-		if 'mixture' in self.method:
+		if self.use_sharenet:
 			results_dict['m_tilde'] = self.m_tilde
 			results_dict['S_tilde'] = self.S_tilde
 
@@ -131,7 +134,6 @@ class TargetGeneCAVI(object):
 
 		elbo_list = []
 		while not converged:
-
 			if self.it < 1:
 				self.update_s2()
 
@@ -201,7 +203,7 @@ class TargetGeneCAVI(object):
 
 		u = 0.5*(np.log(s2/sigma2_beta) + mu**2/s2)
 
-		if 'mixture' not in self.method:
+		if self.use_sharenet:
 			u += np.log(self.pi/(1-self.pi))
 		else:
 			u += (self.exp_log_sigmoid1-self.exp_log_sigmoid2)
@@ -245,7 +247,7 @@ class TargetGeneCAVI(object):
 			mu = self.mu[cluster_no]
 
 			sigma2_beta = (alpha*(s2 + mu**2)).sum()/alpha.sum()
-			self.sigma2_beta[cluster_no] = np.clip(sigma2_beta,10**-5,10**5)
+			self.sigma2_beta[cluster_no] = sigma2_beta
 
 	def update_sigma2_epsilon(self):
 
@@ -266,19 +268,15 @@ class TargetGeneCAVI(object):
 			value = y_XB.dot(y_XB) + ((alpha*(s2+mu**2)-(alpha*mu)**2)*np.diag(XX)).sum()
 			value *= 1/N
 
-			self.sigma2_eps[cluster_no] = np.clip(value,10**-5,10**5)
+			self.sigma2_eps[cluster_no] = value
 
 	def grad_m_tilde(self,x,alpha,S_tilde_diag,eta=0.5,K=6):
 
 		t_values = np.arange(-K,K+1)
 		g = np.array([self.w[i]*(alpha-sigmoid(x + eta*t*np.sqrt(S_tilde_diag))) \
 			for i,t in enumerate(t_values)]).sum(0)
-
-		if 'mixture' in self.method:
-			g += np.einsum('ij,ijk->ik',-(x - self.mvg_mean),self.mvg_precision)
-		else:
-			g += -(x - self.mvg_mean).dot(self.mvg_precision)
-
+		g += np.einsum('ij,ijk->ik',-(x - self.weighted_mean),self.weighted_precision)
+		
 		return g
 
 	def update_m_tilde(self,step_size=1,max_it=50,tol=0.01):
@@ -322,7 +320,7 @@ class TargetGeneCAVI(object):
 		for i in range(x.shape[0]):
 			D[i][np.diag_indices(x.shape[1])] = d[i]
 		
-		g = -0.5*self.mvg_precision + D
+		g = -0.5*self.weighted_precision + D
 
 		if np.count_nonzero(x) == x.shape[0]*x.shape[1]:
 			x_inv = np.zeros(x.shape)
@@ -369,22 +367,21 @@ def cavi_update_tilde(input_dict):
 	cavi = TargetGeneCAVI(input_dict)
 	return cavi.update_tilde()
 
-class GeneNetworkModel(object):
+class ShareNetGeneModel(object):
 	def __init__(self,cluster_data_dict,
-				 method,results_dir,outfile,
-				 test_cluster_data_dict=None,
+				 use_sharenet,results_dir,outfile,
 				 regtarget_dict=None,
-				 tolerance=0.01,log_transform=False,
-				 z_transform=False,q_transform=False,\
-				 num_components=10):
+				 tolerance=0.01,
+				 num_components=10,\
+				 covariance_prior=None,\
+				 mean_prior=None,\
+				 degrees_of_freedom_prior=None,\
+				 beta_0=1,
+				 verbose=True):
 
-		self.method = method
+		self.use_sharenet = use_sharenet
+		self.verbose = verbose
 		self.cluster_data_dict = cluster_data_dict
-		self.test_cluster_data_dict = test_cluster_data_dict
-
-		self.log_transform = log_transform
-		self.z_transform = z_transform
-		self.q_transform = q_transform
 
 		self.results_dir = results_dir
 		self.outfile = outfile
@@ -395,43 +392,37 @@ class GeneNetworkModel(object):
 		# set regulator-target pairings
 		self.set_regtarget_pairings(regtarget_dict)
 
-		depthnorm = True if 'depthnorm' in self.method else False
-		clip = True if 'clip' in self.method else False
-
-		# data pre-processing on training set
-		for cluster_no,data in self.cluster_data_dict.items():
-			data = preprocess_data(data,self.log_transform,\
-				self.z_transform,self.q_transform,depthnorm,clip)
-			self.cluster_data_dict[cluster_no] = data
-
-		# data transformations on test set
-		if self.test_cluster_data_dict != None:
-			for cluster_no,data in self.test_cluster_data_dict.items():
-				data = preprocess_data(data,self.log_transform,self.z_transform,\
-					self.q_transform,depthnorm,clip)
-				self.test_cluster_data_dict[cluster_no] = data
-		
 		self.C = len(self.cluster_no_list)
-		self.K = num_components #10 # number of mixture of components
-		self.beta_0 = 1
-		self.mu_0 = np.zeros(self.C)
+		self.K = num_components
+
+		# mixture hyperparameters
+		self.beta_0 = beta_0
+		if covariance_prior is not None:
+			self.covariance_prior = covariance_prior
+			self.use_covariance_prior = True
+		else:
+			self.use_covariance_prior = False
+			self.covariance_prior = None
+
+		if degrees_of_freedom_prior is not None:
+			self.dof = degrees_of_freedom_prior
+		else:
+			self.dof = None
+
+		if mean_prior is not None:
+			self.mu_0 = mean_prior
+		else:
+			self.mu_0 = None
 
 		# set up dictionaries to store variational parameters
-		self.params_dict = {}
-		if 'cavi' in self.method:
-			self.params_dict = {key: {} for key in ['alpha','mu','s2',\
-				'sigma2_eps','sigma2_beta']}
-			if 'mixture' in self.method:
-				self.params_dict['m_tilde'] = {}
-				self.params_dict['S_tilde'] = {}
-				self.params_dict['mvg_mean'] = {}
-				self.params_dict['mvg_precision'] = {}
-				self.params_dict['phi'] = {}
-		else:
-			self.params_dict = {'beta': {}}
+		self.params_dict = {key: {} for key in ['alpha','mu','s2',\
+			'sigma2_eps','sigma2_beta']}
+		if self.use_sharenet:
+			self.params_dict.update({key: {} for key in \
+				['m_tilde','S_tilde','weighted_mean',\
+				'weighted_precision','phi']})
 
 		self.tolerance = tolerance
-
 		self.XX_dict = {cluster_no: data.T.dot(data) for cluster_no,data \
 			in self.cluster_data_dict.items()}
 
@@ -442,9 +433,10 @@ class GeneNetworkModel(object):
 			self.target_inds_list = list(range(self.n_genes))
 		else:
 			self.regtarget_dict = regtarget_dict
-			# remove tf-tf pairings
-			self.regtarget_dict = {target_ind: sorted(list(set(tf_inds_list) - {target_ind})) for \
-				target_ind,tf_inds_list in self.regtarget_dict.items()}
+			# remove auto-reg gene pairs
+			self.regtarget_dict = {target_ind: sorted(list(set(tf_inds_list) \
+				- {target_ind})) for target_ind,tf_inds_list \
+				in self.regtarget_dict.items()}
 			self.target_inds_list = sorted(list(regtarget_dict.keys()))
 
 	def prepare_input_dict(self,target_ind):
@@ -461,13 +453,14 @@ class GeneNetworkModel(object):
 			for cluster_no in self.cluster_no_list}
 
 		input_dict = {}
-		input_dict['method'] = self.method
+		input_dict['use_sharenet'] = self.use_sharenet
 		input_dict['target_ind'] = target_ind
 		input_dict['y_dict'] = y_dict
 		input_dict['X_dict'] = X_dict
 		input_dict['XX_dict'] = XX_dict.copy()
 		input_dict['Xy_dict'] = Xy_dict.copy()
 		input_dict['tolerance'] = self.tolerance
+		input_dict['verbose'] = self.verbose
 
 		return input_dict
 
@@ -477,33 +470,41 @@ class GeneNetworkModel(object):
 		for param in self.params_list:
 			init_params_dict[param] = self.params_dict[param][target_ind]
 
-		if 'mixture' in self.method:
-			
+		if self.use_sharenet:
 			m_tilde = np.array([self.params_dict['m_tilde'][target_ind][c] \
 				for c in self.cluster_no_list]).T
 			phi = self.params_dict['phi'][target_ind]
 
-			init_params_dict['mvg_precision'] = np.einsum('ij,jkl->ikl',phi,self.precisions_)
-			init_params_dict['mvg_mean'] = phi.dot(self.means_)
+			init_params_dict['weighted_precision'] = np.einsum('ij,jkl->ikl',phi,self.precisions_)
+			init_params_dict['weighted_mean'] = phi.dot(self.means_)
 
 		return init_params_dict
 
 	def prepare_init_mixture_params(self):
 
+		if self.mu_0 is None:
+			self.mu_0 = np.zeros(self.C)
+
+		if self.dof is None:
+			self.dof = self.C
+
+		if self.covariance_prior is None:
+			self.Psi_inv = np.eye(self.C)*self.dof
+		else:
+			self.Psi_inv = self.covariance_prior*self.dof
+
 		self.means_ = np.ones((self.K,self.C))*-2
 		self.precisions_ = np.array([np.eye(self.C) \
-			for i in range(self.K)])*0.001
+			for i in range(self.K)])
 
 		num_edges = sum([len(v) for k,v in self.regtarget_dict.items()])
 		self.phi = np.ones((num_edges,self.K))/self.K
 		self.N_k = self.phi.sum(0)
 
-		self.dof = self.K
 		self.dof_tilde = self.dof + self.phi.sum(0)
 		self.B_tilde = (self.precisions_.T/self.dof_tilde).T
 		self.precisions_ = (self.B_tilde.T*self.dof_tilde).T
 		self.covariances_ = np.linalg.inv(self.precisions_)
-		self.Psi_inv = np.eye(self.C)*self.dof
 
 		for target_ind in self.target_inds_list:
 			n_regs = len(self.regtarget_dict[target_ind])
@@ -537,7 +538,6 @@ class GeneNetworkModel(object):
 			else:
 				target_ind = self.target_inds_list[i]
 				input_dict = self.prepare_input_dict(target_ind)
-				# set up initial parameters
 				if not initialize:
 					init_params_dict = None
 				else:
@@ -570,7 +570,11 @@ class GeneNetworkModel(object):
 					results = p.map(cavi_update_tilde,input_dict_list)
 
 			for j,target_ind in enumerate(self.target_inds_list[start:end]):
-				results_params_dict = results[j]
+				target_ind = self.target_inds_list[j]
+				input_dict = self.prepare_input_dict(target_ind)
+				input_dict['init_params'] = self.prepare_init_params(target_ind)
+
+				results_params_dict = cavi_update_tilde(input_dict)
 				for param in ['m_tilde','S_tilde']:
 					self.params_dict[param][target_ind] = results_params_dict[param]
 
@@ -634,7 +638,7 @@ class GeneNetworkModel(object):
 		self.update_precisions(m_tilde,S_tilde)
 		self.update_phi(m_tilde,S_tilde)
 
-		# update phi per target ind
+		# update phi for each target ind
 		ind = 0
 		for target_ind in self.target_inds_list:
 			n_regs = len(self.regtarget_dict[target_ind])
@@ -653,7 +657,7 @@ class GeneNetworkModel(object):
 			self.update_tilde_parameters(n_processes)
 
 			# update mixture parameters
-			if 'mixture' in self.method:
+			if self.use_sharenet:
 				self.update_mixture()
 
 			# relative change of m_tilde
@@ -668,141 +672,21 @@ class GeneNetworkModel(object):
 
 			inner_it += 1
 
-			print('Inner it {}'.format(inner_it),max_change,'-----')
-
 			self.max_change_list.append(max_change)
 
-		print('TOTAL INNER IT: {}'.format(inner_it))
-
-	def estimate_network(self,approach,n_processes=16):
+	def estimate_network(self,n_processes=1):
 
 		self.params_list = ['alpha','mu','s2','sigma2_beta','sigma2_eps']
-		if 'mixture' in self.method:
+		if self.use_sharenet:
 			self.params_list.extend(['m_tilde','S_tilde'])
 
-		if approach == 'cavi':
+		# initialize mixture parameters
+		if self.use_sharenet:
+			self.prepare_init_mixture_params()
 
-			# initialize mvg parameters
-			if 'mixture' in self.method:
-				self.prepare_init_mixture_params()
+		self.update_regression_parameters(n_processes,initialize=False)
 
-			self.update_regression_parameters(n_processes,initialize=False)
-			for j,target_ind in enumerate(self.target_inds_list):
-				self.write_params(target_ind,first_pass=True)
-
-			if 'mixture' in self.method:
-				self.update_hyperprior_parameters(n_processes)
-				self.update_regression_parameters(n_processes,initialize=True)
-
-			# write parameters
-			for j,target_ind in enumerate(self.target_inds_list):
-				self.write_params(target_ind,first_pass=False)
-
-			if 'mixture' in self.method:
-				outfile = 'mvg_mean.' + self.outfile
-
-	def write_params(self,target_ind,first_pass=True):
-
-		for param_name,param_dict in self.params_dict.items():
-			if 'mvg_' not in param_name and param_name not in ['S_tilde','mixture_weights','phi']:
-				for cluster_no in self.cluster_no_list:
-					if first_pass:
-						outfile = self.outfile.split('.txt')[0] + '.first_pass.txt'
-						outfile = param_name + '.cluster{}.'.format(cluster_no) + outfile
-					else:
-						outfile = param_name + '.cluster{}.'.format(cluster_no) + self.outfile
-					with open(os.path.join(self.results_dir,outfile),'a') as f:
-						writer = csv.writer(f,delimiter='\t')						
-						if param_name in ['b0','r']:
-							writer.writerow([target_ind,param_dict[target_ind][cluster_no]])
-						elif 'sigma' in param_name:
-							continue
-						else:
-							for i,neigh_ind in enumerate(self.regtarget_dict[target_ind]):
-								neigh_param = param_dict[target_ind][cluster_no][i]
-								if neigh_param != 0:
-									writer.writerow([target_ind,neigh_ind,neigh_param])
-
-if __name__ == '__main__':
-	
-	parser = argparse.ArgumentParser()
-	parser.add_argument('-d', '--data_dir', dest='data_dir')
-	parser.add_argument('-r', '--results_dir', dest='results_dir')
-	parser.add_argument('-K', '--K', dest='K',type=int)
-	parser.add_argument('-m', '--method', dest='method')
-	parser.add_argument('-tol','--tolerance',dest='tolerance',type=float,default=0.01)
-	parser.add_argument('-rt','--regtarget',dest='regtarget',type=int,default=0)
-	parser.add_argument('-np','--n_processes',dest='n_processes',type=int,default=8)
-	parser.add_argument('-nc','--num_components',dest='num_components',type=int,default=10)
-
-	args = parser.parse_args()
-
-	log_transform = True if 'gaussian' in args.method else False
-	z_transform = True if ('gaussian' in args.method and 'no_z' not in args.method) else False
-
-	# load regulator-target gene pairings
-	if args.regtarget != 0:
-		print('USING TARGET-REGULATOR PAIRING')
-		if 'gtrd' in args.method:
-			regtarget_data = np.loadtxt(os.path.join(args.data_dir,'regtarget_gtrd.txt'),\
-				delimiter='\t',dtype=str)			
-		else:
-			regtarget_data = np.loadtxt(os.path.join(args.data_dir,'regtarget.txt'),\
-				delimiter='\t',dtype=str)	
-
-		regtarget_dict = {int(target): list(map(int,tfs.split(';'))) for target,tfs \
-			in regtarget_data if len(tfs) > 0}
-
-		target_inds = list(regtarget_dict.keys())
-		for tf_ind in regtarget_dict[target_inds[0]]:
-			regtarget_dict.update({tf_ind: regtarget_dict[target_inds[0]]})
-
-	else:
-		regtarget_dict = None
-		
-	if not os.path.exists(args.results_dir):
-		os.makedirs(args.results_dir)
-
-	num_trials = 4 if 'testLL' in args.method else 2
-	for trial_no in range(1,num_trials):
-		outfile = 'trial{}.{}.tol{}.txt'.format(trial_no,args.method,\
-			round(args.tolerance,5))
-
-		# load data
-		if 'testLL' not in args.method:
-			cluster_data_dict = read_all_cluster_data(args.data_dir,list(range(1,args.K+1)))
-			test_cluster_data_dict = None
-		elif 'downsample' in args.method:
-			num_cells_list = [int(args.method.split('downsample')[1].split('.')[0])] + [10000]*(args.K-1)
-			cluster_data_dict,test_cluster_data_dict = load_data_train_test(args.data_dir,\
-				list(range(1,args.K+1)),num_cells_list,trial_no)
-			cluster_data_dict = {c: np.concatenate([data,test_cluster_data_dict[c]]) \
-				for c,data in cluster_data_dict.items()}
-
-		else:
-			print('USING TEST LOG LIKELIHOOD')
-			cluster_data_dict,_ = load_data_train_test(args.data_dir,\
-				list(range(1,args.K+1)),[10000]*args.K,trial_no,results_dir=args.results_dir)
-
-		n_genes = cluster_data_dict[1].shape[1]
-
-		start = time.time()
-		print('METHOD: {}'.format(args.method))
-		if not os.path.exists(os.path.join(args.results_dir,'alpha.cluster1.' + outfile)):
-
-			name = 'trial{}'.format(trial_no)
-			model = GeneNetworkModel(cluster_data_dict,args.method,args.results_dir,outfile,\
-									 regtarget_dict=regtarget_dict,\
-									 tolerance=args.tolerance,\
-									 log_transform=log_transform,\
-									 q_transform=q_transform,\
-									 z_transform=z_transform,\
-									 num_components=args.num_components)
-
-			if 'cavi' in args.method:
-				model.estimate_network(approach='cavi',n_processes=args.n_processes)
-
-			end = time.time()
-			print('Total Run Time: {}'.format(end-start))
-
+		if self.use_sharenet:
+			self.update_hyperprior_parameters(n_processes)
+			self.update_regression_parameters(n_processes,initialize=True)
 
