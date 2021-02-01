@@ -674,7 +674,7 @@ class ShareNetGeneModel(object):
 
 			self.max_change_list.append(max_change)
 
-	def estimate_network(self,n_processes=1):
+	def fit(self,n_processes=1):
 
 		self.params_list = ['alpha','mu','s2','sigma2_beta','sigma2_eps']
 		if self.use_sharenet:
@@ -689,4 +689,8 @@ class ShareNetGeneModel(object):
 		if self.use_sharenet:
 			self.update_hyperprior_parameters(n_processes)
 			self.update_regression_parameters(n_processes,initialize=True)
+
+	def get_model_params(self,param_name,cluster_no,target_ind):
+		
+		return self.params_dict[param_name][target_ind][cluster_no]
 

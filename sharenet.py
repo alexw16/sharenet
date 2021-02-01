@@ -29,7 +29,7 @@ class ShareNet(object):
 
 	def update_m_tilde(self):
 		first_term = self.phi.dot(np.array([self.means_[k].dot(self.precisions_[k]) \
-											for k in range(self.K)]))
+								for k in range(self.K)]))
 		first_term += self.XdotV
 		self.m_tilde = (first_term[:,:,np.newaxis]*self.S_tilde).sum(1)
 	
@@ -85,12 +85,12 @@ class ShareNet(object):
 			self.means_[k,:] = (weighted_sum + self.beta_0*self.mu_0)/(self.beta_0 + self.N_k[k])
 		
 	def initialize_parameters(self,X,V=None):
-		self.X = X
+		self.X = np.array(X).T
 		self.C = X.shape[1]
 		self.N = X.shape[0]
 		
 		if V is not None:
-			self.V = V
+			self.V = np.array(V).T
 			self.XdotV = self.X*self.V
 		else:
 			self.V = np.eye(self.C)/X.std()
@@ -155,6 +155,10 @@ class ShareNet(object):
 					print(it,relative_change)
 		end = time.time()
 		print('Time: {} seconds'.format(np.round(end-start,3)))
+
+	def get_revised_edge_scores(self):
+		
+		return self.m_tilde
 
 	def predict(self,X,V=None,max_it=100,tol=0.01,verbose=True):
 		self.initialize_parameters(X,V)
