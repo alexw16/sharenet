@@ -2,8 +2,10 @@ import numpy as np
 import time
 
 class ShareNet(object):
-	def __init__(self,n_components,covariance_prior=None,mean_prior=None,degrees_of_freedom_prior=None,\
-				 init_params='kmeans',random_state=1,beta_0=1):
+	def __init__(self,n_components,covariance_prior=None,
+				mean_prior=None,degrees_of_freedom_prior=None,
+				init_params='kmeans',random_state=1,beta_0=1):
+	
 		np.random.seed(random_state)
 		
 		self.K = n_components
@@ -157,7 +159,7 @@ class ShareNet(object):
 		print('Time: {} seconds'.format(np.round(end-start,3)))
 
 	def get_revised_edge_scores(self):
-		
+
 		return self.m_tilde
 
 	def predict(self,X,V=None,max_it=100,tol=0.01,verbose=True):

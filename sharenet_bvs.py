@@ -657,8 +657,7 @@ class ShareNetGeneModel(object):
 			self.update_tilde_parameters(n_processes)
 
 			# update mixture parameters
-			if self.use_sharenet:
-				self.update_mixture()
+			self.update_mixture()
 
 			# relative change of m_tilde
 			m_tilde_list = []
@@ -684,13 +683,15 @@ class ShareNetGeneModel(object):
 		if self.use_sharenet:
 			self.prepare_init_mixture_params()
 
+		# update regression parameters
 		self.update_regression_parameters(n_processes,initialize=False)
 
+		# update mixture prior parameters + regression parameters
 		if self.use_sharenet:
 			self.update_hyperprior_parameters(n_processes)
 			self.update_regression_parameters(n_processes,initialize=True)
 
 	def get_model_params(self,param_name,cluster_no,target_ind):
-		
+
 		return self.params_dict[param_name][target_ind][cluster_no]
 
