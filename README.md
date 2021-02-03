@@ -5,8 +5,8 @@ ShareNet is a Bayesian framework for boosting the accuracy of cell type-specific
 Here is an example workflow for using ShareNet with the outputs of a chosen network inference algorithm.
 ```python
 # list of network edge scores 
-# (each element in the list corresponds to the flattened network edge scores for a unique cell 
-# type - e.g., T x R matrix for a network would be flattened into a vector of length T*R)
+# (each element in the list corresponds to the matrix of network edge scores for a unique cell 
+# type - e.g., T x R matrix for a network considering T target genes, R regulator genes) 
 # Note: networks must be of the same size
 X = [list of numpy.ndarray]
 
@@ -16,7 +16,8 @@ X = [list of numpy.ndarray]
 V = [list of numpy.ndarray]
 
 import sharenet
- 
+
+# n_components = number of mixture components to use 
 model = sharenet.ShareNet(n_components = n_components)
 
 # update model parameters using CAVI
