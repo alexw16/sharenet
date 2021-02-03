@@ -369,7 +369,7 @@ def cavi_update_tilde(input_dict):
 
 class ShareNetGeneModel(object):
 	def __init__(self,cluster_data_dict,
-				 use_sharenet,results_dir,outfile,
+				 use_sharenet,
 				 regtarget_dict=None,
 				 tolerance=0.01,
 				 num_components=10,\
@@ -382,9 +382,6 @@ class ShareNetGeneModel(object):
 		self.use_sharenet = use_sharenet
 		self.verbose = verbose
 		self.cluster_data_dict = cluster_data_dict
-
-		self.results_dir = results_dir
-		self.outfile = outfile
 
 		self.cluster_no_list = sorted(list(cluster_data_dict.keys()))
 		self.n_genes = self.cluster_data_dict[1].shape[1]
@@ -694,4 +691,15 @@ class ShareNetGeneModel(object):
 	def get_model_params(self,param_name,cluster_no,target_ind):
 
 		return self.params_dict[param_name][target_ind][cluster_no]
+
+	def write_params(self,param_name,results_dir,outfile):
+		for cluster_no in self.cluster_no_list:
+			with open(os.path.join(results_dir,outfile),'w') as f:
+				writer = csv.writer(f,delimiter='\t')						
+				for target_ind in self.target_inds_list:
+					for i,neigh_ind in enumerate(self.regtarget_dict[target_ind]):
+						neigh_param = param_dict[target_ind][cluster_no][i]
+						if neigh_param != 0:
+							writer.writerow([target_ind,neigh_ind,neigh_param])
+
 

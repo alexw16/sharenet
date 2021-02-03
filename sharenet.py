@@ -5,7 +5,7 @@ class ShareNet(object):
 	def __init__(self,n_components,covariance_prior=None,
 				mean_prior=None,degrees_of_freedom_prior=None,
 				init_params='kmeans',random_state=1,beta_0=1):
-	
+
 		np.random.seed(random_state)
 		
 		self.K = n_components
@@ -14,9 +14,7 @@ class ShareNet(object):
 
 		if covariance_prior is not None:
 			self.covariance_prior = covariance_prior
-			self.use_covariance_prior = True
 		else:
-			self.use_covariance_prior = False
 			self.covariance_prior = None
 
 		if degrees_of_freedom_prior is not None:
@@ -70,15 +68,13 @@ class ShareNet(object):
 			scatter_matrix = (self.phi[:,k]*diff.T).dot(diff) \
 				+ (self.phi[:,k]*self.S_tilde.T).T.sum(0)
 
-			if self.use_covariance_prior:
-				mean_diff = self.mu_0-(self.phi[:,k]*self.m_tilde.T).T.sum(0)/self.N_k[k]
-				mean_prior_term = mean_diff.T.dot(mean_diff)
-				mean_prior_term *= self.beta_0*self.N_k[k]/(self.beta_0+self.N_k[k])
-				B_tilde_inv = self.Psi_inv + scatter_matrix + mean_prior_term
-				self.B_tilde[k] = np.linalg.inv(B_tilde_inv)
-				self.covariances_[k] = B_tilde_inv/self.dof_tilde[k]
-			else:
-				self.covariances_[k] *= 1/self.phi[:,k].sum()
+			mean_diff = self.mu_0-(self.phi[:,k]*self.m_tilde.T).T.sum(0)/self.N_k[k]
+			mean_prior_term = mean_diff.T.dot(mean_diff)
+			mean_prior_term *= self.beta_0*self.N_k[k]/(self.beta_0+self.N_k[k])
+			B_tilde_inv = self.Psi_inv + scatter_matrix + mean_prior_term
+			self.B_tilde[k] = np.linalg.inv(B_tilde_inv)
+			self.covariances_[k] = B_tilde_inv/self.dof_tilde[k]
+
 		self.precisions_ = np.linalg.inv(self.covariances_)
 	
 	def update_means(self):
@@ -87,41 +83,44 @@ class ShareNet(object):
 			self.means_[k,:] = (weighted_sum + self.beta_0*self.mu_0)/(self.beta_0 + self.N_k[k])
 		
 	def initialize_parameters(self,X,V=None):
-		self.X = np.array(X).T
-		self.C = X.shape[1]
-		self.N = X.shape[0]
+
+		self.X = np.array([x.flatten() for x in X]).T
+		self.X_shape = X[0].shape
+		self.N = self.X.shape[0]
+		self.C = self.X.shape[1]
 		
 		if V is not None:
-			self.V = np.array(V).T
+			self.V = np.array([v.flatten() for v in V]).T
+			self.V = np.array([v.flatten()**2 for v in V]).T
+			self.V[self.V == 0] = 1
+			self.V = 1./self.V
 			self.XdotV = self.X*self.V
 		else:
-			self.V = np.eye(self.C)/X.std()
+			self.V = np.eye(self.C)/self.X.std()
 			self.XdotV = self.X*self.V
 			self.V = np.array([self.V for i in range(self.X.shape[0])])
 
 		if self.mu_0 is None:
-			self.mu_0 = np.zeros(self.C)
+			self.mu_0 = self.X.mean(0)
 
 		if self.dof is None:
 			self.dof = self.C
 
 		if self.covariance_prior is None:
-			self.Psi_inv = np.eye(self.C)*self.dof
+			self.Psi_inv = np.eye(self.C)*(self.X.std(0)**2)*self.dof
 		else:
 			self.Psi_inv = self.covariance_prior*self.dof
 		
-		self.m_tilde = X.copy()
+		self.m_tilde = self.X.copy()
 		self.S_tilde = self.V.copy()	
 
-		self.X = None # remove X to reduce memory footprint
-
-	def initialize_mixture_parameters(self,X,V=None):
+	def initialize_mixture_parameters(self):
 
 		if self.init_params == 'kmeans':
 			from sklearn.cluster import KMeans
-			km = KMeans(n_clusters=self.K,max_iter=20).fit(X)
+			km = KMeans(n_clusters=self.K,max_iter=20).fit(self.X)
 			self.means_ = km.cluster_centers_
-			self.phi = np.zeros((X.shape[0],self.K))
+			self.phi = np.zeros((self.X.shape[0],self.K))
 			self.phi[np.arange(self.phi.shape[0]), km.labels_] = 1
 		else:
 			self.means_ = np.random.random((self.K,self.C))
@@ -135,11 +134,13 @@ class ShareNet(object):
 		self.precisions_ = (self.B_tilde.T*self.dof_tilde).T
 		self.covariances_ = np.linalg.inv(self.precisions_)
 
+		self.X = None # remove X to reduce memory footprint
+
 	def fit(self,X,V=None,max_it=100,tol=0.01,verbose=True):
 
 		start = time.time()
 		self.initialize_parameters(X,V)
-		self.initialize_mixture_parameters(X,V)
+		self.initialize_mixture_parameters()
 
 		for it in range(max_it):
 			old_m_tilde = self.m_tilde.copy()
@@ -160,7 +161,7 @@ class ShareNet(object):
 
 	def get_revised_edge_scores(self):
 
-		return self.m_tilde
+		return [self.m_tilde[:,i].reshape(self.X_shape) for i in range(self.C)]
 
 	def predict(self,X,V=None,max_it=100,tol=0.01,verbose=True):
 		self.initialize_parameters(X,V)
@@ -177,5 +178,3 @@ class ShareNet(object):
 					print(it,relative_change)
 
 		return self.m_tilde,self.S_tilde,self.phi
-
-
