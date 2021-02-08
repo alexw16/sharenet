@@ -1,5 +1,6 @@
 import numpy as np
 import time
+from scipy.special import digamma
 
 class ShareNet(object):
 	def __init__(self,n_components,covariance_prior=None,
@@ -32,15 +33,29 @@ class ShareNet(object):
 								for k in range(self.K)]))
 		first_term += self.XdotV
 		self.m_tilde = (first_term[:,:,np.newaxis]*self.S_tilde).sum(1)
-	
-	def update_S_tilde(self):
 
-		diag_indices = (np.repeat(np.arange(self.N),self.C),\
-			np.tile(np.arange(self.C),self.N),np.tile(np.arange(self.C),self.N))
-		S_tilde_inv = np.einsum('ij,jkl->ikl',self.phi,self.precisions_)
-		S_tilde_inv[diag_indices] += self.V.flatten()
-		self.S_tilde = np.linalg.inv(S_tilde_inv)
-		
+	def update_S_tilde(self,use_block):
+
+		if use_block:
+			block_size = 10000
+			for i in range(0,self.N,block_size):
+				S_tilde_inv = np.einsum('ij,jkl->ikl',self.phi[i:i+block_size],\
+					self.precisions_)
+
+				N = S_tilde_inv.shape[0]
+				diag_indices = (np.repeat(np.arange(N),self.C),\
+					np.tile(np.arange(self.C),N),np.tile(np.arange(self.C),N))
+
+				S_tilde_inv[diag_indices] += self.V[i:i+block_size].flatten()
+				self.S_tilde[i:i+block_size,:,:] = np.linalg.inv(S_tilde_inv)
+		else:
+			diag_indices = (np.repeat(np.arange(self.N),self.C),\
+				np.tile(np.arange(self.C),self.N),np.tile(np.arange(self.C),self.N))
+			S_tilde_inv = np.einsum('ij,jkl->ikl',self.phi,self.precisions_)
+			S_tilde_inv[diag_indices] += self.V.flatten()
+			self.S_tilde = np.linalg.inv(S_tilde_inv)
+			
+
 	def update_phi(self):
 		phi_unnormalized = np.zeros(self.phi.shape)
 		
@@ -49,10 +64,13 @@ class ShareNet(object):
 		for k in range(self.K):
 			diff = self.m_tilde-self.means_[k]
 			quad = (diff.dot(self.precisions_[k])*diff).sum(1)
-			s,logdet = np.linalg.slogdet(self.covariances_[k])
+			s,logdet = np.linalg.slogdet(self.B_tilde[k])
 			logdet *= s
-			ll = -0.5*quad - 0.5*logdet - 0.5*self.C*np.log(2*np.pi)
-			phi_unnormalized[:,k] = ll - 0.5*trace[:,k]
+			digamma_value = sum([digamma((self.dof_tilde[k]+1-i)/2) \
+				for i in range(1,self.C+1)])
+			ll = -0.5*(quad + (self.C/(self.beta_0 + self.N_k[k])) + trace[:,k])
+			ll += 0.5*(logdet + digamma_value)
+			phi_unnormalized[:,k] = ll
 		self.phi = np.exp(phi_unnormalized)
 		self.phi = (self.phi.T/self.phi.sum(1)).T
 		self.phi[np.isnan(self.phi)] = 1./self.K
@@ -112,7 +130,7 @@ class ShareNet(object):
 			self.Psi_inv = self.covariance_prior*self.dof
 		
 		self.m_tilde = self.X.copy()
-		self.S_tilde = self.V.copy()	
+		self.S_tilde = np.array([np.diag(v) for v in self.V])
 
 	def initialize_mixture_parameters(self):
 
@@ -122,21 +140,50 @@ class ShareNet(object):
 			self.means_ = km.cluster_centers_
 			self.phi = np.zeros((self.X.shape[0],self.K))
 			self.phi[np.arange(self.phi.shape[0]), km.labels_] = 1
+			self.covariances_ = []
+			for k in range(self.K):
+				inds = np.where(km.labels_ == k)[0]
+				self.covariances_.append(np.cov(self.X[inds].T,bias=True))
+			self.covariances_ = np.array(self.covariances_)
+			self.precisions_ = np.linalg.inv(self.covariances_)
 		else:
 			self.means_ = np.random.random((self.K,self.C))
 			self.phi = np.ones((X.shape[0],self.K))/self.K	
-
-		self.precisions_ = np.array([np.eye(self.C) for k in range(self.K)])
-		self.covariances_ = np.linalg.inv(self.precisions_)
+			self.precisions_ = np.array([np.eye(self.C) for k in range(self.K)])
+			self.covariances_ = np.linalg.inv(self.precisions_)
 
 		self.dof_tilde = self.dof + self.phi.sum(0)
 		self.B_tilde = (self.precisions_.T/self.dof_tilde).T
 		self.precisions_ = (self.B_tilde.T*self.dof_tilde).T
 		self.covariances_ = np.linalg.inv(self.precisions_)
+		self.N_k = self.phi.sum(0)
 
 		self.X = None # remove X to reduce memory footprint
 
-	def fit(self,X,V=None,max_it=100,tol=0.01,verbose=True):
+	def fit(self,X,V=None,max_it=100,tol=0.01,verbose=True,use_block=True):
+
+		start = time.time()
+		self.initialize_parameters(X,V)
+		self.initialize_mixture_parameters()
+
+		for it in range(max_it):
+			old_m_tilde = self.m_tilde.copy()
+			self.update_S_tilde(use_block=use_block)
+			self.update_m_tilde()
+			self.update_phi()
+			self.update_means()
+			self.update_precisions()
+
+			relative_change = abs(self.m_tilde-old_m_tilde).max()/abs(old_m_tilde+1e-10).mean()
+			if relative_change < tol and it > 4:
+				break
+			else:
+				if verbose:
+					print(it,relative_change)
+		end = time.time()
+		print('Time: {} seconds'.format(np.round(end-start,3)))
+
+	def fit_stochastic(self,X,V=None,max_it=100,tol=0.01,verbose=True):
 
 		start = time.time()
 		self.initialize_parameters(X,V)

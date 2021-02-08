@@ -396,10 +396,8 @@ class ShareNetGeneModel(object):
 		self.beta_0 = beta_0
 		if covariance_prior is not None:
 			self.covariance_prior = covariance_prior
-			self.use_covariance_prior = True
 		else:
 			self.use_covariance_prior = False
-			self.covariance_prior = None
 
 		if degrees_of_freedom_prior is not None:
 			self.dof = degrees_of_freedom_prior
@@ -667,6 +665,9 @@ class ShareNetGeneModel(object):
 			m_tilde_old = m_tilde.copy()
 
 			inner_it += 1
+
+			if self.verbose:
+				print(inner_it,max_change)
 
 			self.max_change_list.append(max_change)
 

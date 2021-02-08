@@ -97,23 +97,20 @@ def bootstrap_sample(data_dir,cluster_no_list,trial_no,\
 		
 	return cluster_data_dict
 
-def load_single_network(data_dir,file_name,n_genes,cluster_no,param):
+def load_network(results_dir,file_name,n_genes):
+	
+	pred_network = pd.read_csv(os.path.join(results_dir,file_name),\
+		sep='\t',header=None).values
+	if 'genie' in file_name:
+		pred_network = pred_network.T
+		if 'beeline' not in results_dir:
+			inds_file_name = file_name.split('txt')[0] + 'nonzero_inds.txt'
+			inds2keep = np.loadtxt(os.path.join(results_dir,inds_file_name),dtype=int)
+			network = np.zeros((n_genes,n_genes))
+			network[np.ix_(inds2keep,inds2keep)] = pred_network.copy()
+			pred_network = network.copy()
+	elif 'corr' in file_name:
+		pred_network *= (1-np.eye(pred_network.shape[0]))
 
-	network = np.zeros((n_genes,n_genes))
-	cluster_file_name = '{}.cluster{}.{}'.format(param,cluster_no,file_name)
-	data = pd.read_csv(os.path.join(data_dir,cluster_file_name),\
-		delimiter='\t',header=None).values
-	inds = (data[:,0].astype(int),data[:,1].astype(int))
-	values = data[:,2].astype(float)
-	network[inds] = values
-
-	return network
-
-def load_all_networks(data_dir,file_name,n_genes,K,param):
-
-	pred_network_dict = {}
-	for cluster_no in range(1,K+1):
-		pred_network_dict[cluster_no] = load_single_network(data_dir,file_name,n_genes,cluster_no,param)
-
-	return pred_network_dict
+	return pred_network
 
