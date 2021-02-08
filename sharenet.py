@@ -183,29 +183,6 @@ class ShareNet(object):
 		end = time.time()
 		print('Time: {} seconds'.format(np.round(end-start,3)))
 
-	def fit_stochastic(self,X,V=None,max_it=100,tol=0.01,verbose=True):
-
-		start = time.time()
-		self.initialize_parameters(X,V)
-		self.initialize_mixture_parameters()
-
-		for it in range(max_it):
-			old_m_tilde = self.m_tilde.copy()
-			self.update_S_tilde()
-			self.update_m_tilde()
-			self.update_phi()
-			self.update_means()
-			self.update_precisions()
-			
-			relative_change = abs(self.m_tilde-old_m_tilde).max()/abs(old_m_tilde+1e-10).mean()
-			if relative_change < tol and it > 4:
-				break
-			else:
-				if verbose:
-					print(it,relative_change)
-		end = time.time()
-		print('Time: {} seconds'.format(np.round(end-start,3)))
-
 	def get_revised_edge_scores(self):
 
 		return [self.m_tilde[:,i].reshape(self.X_shape) for i in range(self.C)]
