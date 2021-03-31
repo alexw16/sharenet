@@ -13,8 +13,8 @@ python -u "${script_dir}/sharenet_accuracy.py" -d $base_dir -r $results_dir -K 2
 python -u "${script_dir}/sharenet_accuracy.py" -d $base_dir -r $results_dir -K 24 -f $file_name -rn "nonspecific_chip" 
 python -u "${script_dir}/sharenet_accuracy.py" -d $base_dir -r $results_dir -K 24 -f $file_name -rn "specific_chip" 
 
-script_dir="/data/cb/alexwu/sharenet"
-base_dir="/data/cb/alexwu/sharenet/example2"
+script_dir=".."
+base_dir="${script_dir}/example2"
 results_dir="${base_dir}/results"
 
 file_name="sharenet.nc10.pidc.edges.txt"
