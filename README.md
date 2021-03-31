@@ -46,5 +46,8 @@ model.fit(n_processes = n_processes)
 model.get_model_params(param_name, celltype_no, target_ind)
 ```
 
+## Examples
+A couple of examples using real single-cell datasets can be found in ```sharent/example1``` and ```sharenet/example2```. Example 1 provides a step-by-step walkthrough of a smaller example that uses data from the BEELINE benchmarking dataset. Example 2 includes a comprehensive example related to the mouse blood lineage dataset, in which ShareNet is applied to networks inferred with PIDC, and the accuracy of the networks inferred with and without ShareNet are compared. Jupyter notebooks are provided in each of the corresponding subdirectories with more detailed descriptions.
+
 ## Questions
 For questions about the code, contact [alexwu@mit.edu](mailto:alexwu@mit.edu).
